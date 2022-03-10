@@ -14,17 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+.button-link {
+  cursor: pointer;
+  color: var(--n-color-target);
 
-import mapping from './mapping'
-import regex from './regex'
-import truncateText from './truncate-text'
-import log from './log'
-
-const utils = {
-  mapping,
-  regex,
-  truncateText,
-  log
+  &:hover {
+    text-decoration: underline;
+  }
 }
-
-export default utils
