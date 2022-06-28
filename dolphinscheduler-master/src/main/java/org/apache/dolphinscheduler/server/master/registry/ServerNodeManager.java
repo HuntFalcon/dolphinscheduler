@@ -36,8 +36,9 @@ import org.apache.dolphinscheduler.service.queue.MasterPriorityQueue;
 import org.apache.dolphinscheduler.service.registry.RegistryClient;
 
 import org.apache.commons.collections.CollectionUtils;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -131,6 +132,8 @@ public class ServerNodeManager implements InitializingBean {
     @Autowired
     private MasterConfig masterConfig;
 
+    private List<WorkerInfoChangeListener> workerInfoChangeListeners = new ArrayList<>();
+
     private static volatile int MASTER_SLOT = 0;
 
     private static volatile int MASTER_SIZE = 0;
@@ -217,6 +220,7 @@ public class ServerNodeManager implements InitializingBean {
                         }
                     }
                 }
+                notifyWorkerInfoChangeListeners();
             } catch (Exception e) {
                 logger.error("WorkerNodeInfoAndGroupDbSyncTask error:", e);
             }
@@ -246,7 +250,7 @@ public class ServerNodeManager implements InitializingBean {
                         String group = parseGroup(path);
                         Collection<String> currentNodes = registryClient.getWorkerGroupNodesDirectly(group);
                         syncWorkerGroupNodes(group, currentNodes);
-                        alertDao.sendServerStopedAlert(1, path, "WORKER");
+                        alertDao.sendServerStoppedAlert(1, path, "WORKER");
                     } else if (type == Type.UPDATE) {
                         logger.debug("worker group node : {} update, data: {}", path, data);
                         String group = parseGroup(path);
@@ -256,6 +260,7 @@ public class ServerNodeManager implements InitializingBean {
                         String node = parseNode(path);
                         syncSingleWorkerNodeInfo(node, data);
                     }
+                    notifyWorkerInfoChangeListeners();
                 } catch (IllegalArgumentException ex) {
                     logger.warn(ex.getMessage());
                 } catch (Exception ex) {
@@ -296,7 +301,7 @@ public class ServerNodeManager implements InitializingBean {
                     if (type.equals(Type.REMOVE)) {
                         logger.info("master node : {} down.", path);
                         updateMasterNodes();
-                        alertDao.sendServerStopedAlert(1, path, "MASTER");
+                        alertDao.sendServerStoppedAlert(1, path, "MASTER");
                     }
                 } catch (Exception ex) {
                     logger.error("MasterNodeListener capture data change and get data failed.", ex);
@@ -454,6 +459,23 @@ public class ServerNodeManager implements InitializingBean {
             workerNodeInfo.put(node, info);
         } finally {
             workerNodeInfoLock.unlock();
+        }
+    }
+
+    /**
+     * Add the resource change listener, when the resource changed, the listener will be notified.
+     *
+     * @param listener will be trigger, when the worker node info changed.
+     */
+    public synchronized void addWorkerInfoChangeListener(WorkerInfoChangeListener listener) {
+        workerInfoChangeListeners.add(listener);
+    }
+
+    private void notifyWorkerInfoChangeListeners() {
+        Map<String, Set<String>> workerGroupNodes = getWorkerGroupNodes();
+        Map<String, String> workerNodeInfo = getWorkerNodeInfo();
+        for (WorkerInfoChangeListener listener : workerInfoChangeListeners) {
+            listener.notify(workerGroupNodes, workerNodeInfo);
         }
     }
 

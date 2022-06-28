@@ -30,6 +30,7 @@ import org.apache.dolphinscheduler.common.enums.ProcessExecutionTypeEnum;
 import org.apache.dolphinscheduler.common.enums.TaskGroupQueueStatus;
 import org.apache.dolphinscheduler.common.enums.UserType;
 import org.apache.dolphinscheduler.common.enums.WarningType;
+import org.apache.dolphinscheduler.common.expand.CuringGlobalParamsService;
 import org.apache.dolphinscheduler.common.graph.DAG;
 import org.apache.dolphinscheduler.common.model.TaskNode;
 import org.apache.dolphinscheduler.common.model.TaskNodeRelation;
@@ -63,6 +64,7 @@ import org.apache.dolphinscheduler.dao.mapper.ProcessInstanceMapper;
 import org.apache.dolphinscheduler.dao.mapper.ProcessTaskRelationLogMapper;
 import org.apache.dolphinscheduler.dao.mapper.ProcessTaskRelationMapper;
 import org.apache.dolphinscheduler.dao.mapper.ResourceMapper;
+import org.apache.dolphinscheduler.dao.mapper.ScheduleMapper;
 import org.apache.dolphinscheduler.dao.mapper.TaskDefinitionLogMapper;
 import org.apache.dolphinscheduler.dao.mapper.TaskDefinitionMapper;
 import org.apache.dolphinscheduler.dao.mapper.TaskGroupMapper;
@@ -75,8 +77,8 @@ import org.apache.dolphinscheduler.plugin.task.api.enums.dp.InputType;
 import org.apache.dolphinscheduler.plugin.task.api.enums.dp.OptionSourceType;
 import org.apache.dolphinscheduler.plugin.task.api.enums.dp.ValueType;
 import org.apache.dolphinscheduler.plugin.task.api.model.ResourceInfo;
+import org.apache.dolphinscheduler.service.cron.CronUtilsTest;
 import org.apache.dolphinscheduler.service.exceptions.ServiceException;
-import org.apache.dolphinscheduler.service.quartz.cron.CronUtilsTest;
 import org.apache.dolphinscheduler.spi.params.base.FormType;
 
 import java.util.ArrayList;
@@ -113,7 +115,7 @@ public class ProcessServiceTest {
     public final ExpectedException exception = ExpectedException.none();
 
     @InjectMocks
-    private ProcessService processService;
+    private ProcessServiceImpl processService;
     @Mock
     private CommandMapper commandMapper;
     @Mock
@@ -157,6 +159,12 @@ public class ProcessServiceTest {
 
     @Mock
     private DqComparisonTypeMapper dqComparisonTypeMapper;
+
+    @Mock
+    private ScheduleMapper scheduleMapper;
+
+    @Mock
+    CuringGlobalParamsService curingGlobalParamsService;
 
     @Test
     public void testCreateSubCommand() {
@@ -284,8 +292,8 @@ public class ProcessServiceTest {
         command.setProcessDefinitionCode(222);
         command.setCommandType(CommandType.REPEAT_RUNNING);
         command.setCommandParam("{\"" + CMD_PARAM_RECOVER_PROCESS_ID_STRING + "\":\"111\",\""
-                + CMD_PARAM_SUB_PROCESS_DEFINE_CODE + "\":\"222\"}");
-        Assert.assertNull(processService.handleCommand(logger, host, command));
+            + CMD_PARAM_SUB_PROCESS_DEFINE_CODE + "\":\"222\"}");
+        Assert.assertNull(processService.handleCommand(host, command));
 
         int definitionVersion = 1;
         long definitionCode = 123;
@@ -320,7 +328,7 @@ public class ProcessServiceTest {
         Mockito.when(processDefineLogMapper.queryByDefinitionCodeAndVersion(processInstance.getProcessDefinitionCode(),
                 processInstance.getProcessDefinitionVersion())).thenReturn(new ProcessDefinitionLog(processDefinition));
         Mockito.when(processInstanceMapper.queryDetailById(222)).thenReturn(processInstance);
-        Assert.assertNotNull(processService.handleCommand(logger, host, command1));
+        Assert.assertNotNull(processService.handleCommand(host, command1));
 
         Command command2 = new Command();
         command2.setId(2);
@@ -330,7 +338,7 @@ public class ProcessServiceTest {
         command2.setCommandType(CommandType.RECOVER_SUSPENDED_PROCESS);
         command2.setProcessInstanceId(processInstanceId);
         Mockito.when(commandMapper.deleteById(2)).thenReturn(1);
-        Assert.assertNotNull(processService.handleCommand(logger, host, command2));
+        Assert.assertNotNull(processService.handleCommand(host, command2));
 
         Command command3 = new Command();
         command3.setId(3);
@@ -340,7 +348,7 @@ public class ProcessServiceTest {
         command3.setCommandParam("{\"WaitingThreadInstanceId\":222}");
         command3.setCommandType(CommandType.START_FAILURE_TASK_PROCESS);
         Mockito.when(commandMapper.deleteById(3)).thenReturn(1);
-        Assert.assertNotNull(processService.handleCommand(logger, host, command3));
+        Assert.assertNotNull(processService.handleCommand(host, command3));
 
         Command command4 = new Command();
         command4.setId(4);
@@ -350,7 +358,7 @@ public class ProcessServiceTest {
         command4.setCommandType(CommandType.REPEAT_RUNNING);
         command4.setProcessInstanceId(processInstanceId);
         Mockito.when(commandMapper.deleteById(4)).thenReturn(1);
-        Assert.assertNotNull(processService.handleCommand(logger, host, command4));
+        Assert.assertNotNull(processService.handleCommand(host, command4));
 
         Command command5 = new Command();
         command5.setId(5);
@@ -364,7 +372,12 @@ public class ProcessServiceTest {
         command5.setCommandType(CommandType.START_PROCESS);
         command5.setDryRun(Constants.DRY_RUN_FLAG_NO);
         Mockito.when(commandMapper.deleteById(5)).thenReturn(1);
-        ProcessInstance processInstance1 = processService.handleCommand(logger, host, command5);
+        Mockito.when(curingGlobalParamsService.curingGlobalParams(0,
+                processDefinition.getGlobalParamMap(),
+                processDefinition.getGlobalParamList(),
+                CommandType.START_PROCESS,
+                processInstance.getScheduleTime(), null)).thenReturn("\"testStartParam1\"");
+        ProcessInstance processInstance1 = processService.handleCommand(host, command5);
         Assert.assertTrue(processInstance1.getGlobalParams().contains("\"testStartParam1\""));
 
         ProcessDefinition processDefinition1 = new ProcessDefinition();
@@ -389,7 +402,7 @@ public class ProcessServiceTest {
         Mockito.when(processInstanceMapper.queryDetailById(223)).thenReturn(processInstance2);
         Mockito.when(processDefineMapper.queryByCode(11L)).thenReturn(processDefinition1);
         Mockito.when(commandMapper.deleteById(1)).thenReturn(1);
-        Assert.assertNotNull(processService.handleCommand(logger, host, command1));
+        Assert.assertNotNull(processService.handleCommand(host, command1));
 
         Command command6 = new Command();
         command6.setId(6);
@@ -397,10 +410,10 @@ public class ProcessServiceTest {
         command6.setCommandParam("{\"ProcessInstanceId\":223}");
         command6.setCommandType(CommandType.RECOVER_SERIAL_WAIT);
         command6.setProcessDefinitionVersion(1);
-        Mockito.when(processInstanceMapper.queryByProcessDefineCodeAndStatusAndNextId(11L, Constants.RUNNING_PROCESS_STATE, 223)).thenReturn(lists);
+        Mockito.when(processInstanceMapper.queryByProcessDefineCodeAndProcessDefinitionVersionAndStatusAndNextId(11L, 1, Constants.RUNNING_PROCESS_STATE, 223)).thenReturn(lists);
         Mockito.when(processInstanceMapper.updateNextProcessIdById(223, 222)).thenReturn(true);
         Mockito.when(commandMapper.deleteById(6)).thenReturn(1);
-        ProcessInstance processInstance6 = processService.handleCommand(logger, host, command6);
+        ProcessInstance processInstance6 = processService.handleCommand(host, command6);
         Assert.assertTrue(processInstance6 != null);
 
         processDefinition1.setExecutionType(ProcessExecutionTypeEnum.SERIAL_DISCARD);
@@ -418,9 +431,9 @@ public class ProcessServiceTest {
         command7.setCommandType(CommandType.RECOVER_SERIAL_WAIT);
         command7.setProcessDefinitionVersion(1);
         Mockito.when(commandMapper.deleteById(7)).thenReturn(1);
-        Mockito.when(processInstanceMapper.queryByProcessDefineCodeAndStatusAndNextId(11L, Constants.RUNNING_PROCESS_STATE, 224)).thenReturn(null);
-        ProcessInstance processInstance8 = processService.handleCommand(logger, host, command7);
-        Assert.assertTrue(processInstance8 == null);
+        Mockito.when(processInstanceMapper.queryByProcessDefineCodeAndProcessDefinitionVersionAndStatusAndNextId(11L, 1, Constants.RUNNING_PROCESS_STATE, 224)).thenReturn(null);
+        ProcessInstance processInstance8 = processService.handleCommand(host, command7);
+        Assert.assertTrue(processInstance8 != null);
 
         ProcessDefinition processDefinition2 = new ProcessDefinition();
         processDefinition2.setId(123);
@@ -440,10 +453,10 @@ public class ProcessServiceTest {
         command9.setCommandType(CommandType.RECOVER_SERIAL_WAIT);
         command9.setProcessDefinitionVersion(1);
         Mockito.when(processInstanceMapper.queryDetailById(225)).thenReturn(processInstance9);
-        Mockito.when(processInstanceMapper.queryByProcessDefineCodeAndStatusAndNextId(12L, Constants.RUNNING_PROCESS_STATE, 0)).thenReturn(lists);
+        Mockito.when(processInstanceMapper.queryByProcessDefineCodeAndProcessDefinitionVersionAndStatusAndNextId(12L, 1, Constants.RUNNING_PROCESS_STATE, 0)).thenReturn(lists);
         Mockito.when(processInstanceMapper.updateById(processInstance)).thenReturn(1);
         Mockito.when(commandMapper.deleteById(9)).thenReturn(1);
-        ProcessInstance processInstance10 = processService.handleCommand(logger, host, command9);
+        ProcessInstance processInstance10 = processService.handleCommand(host, command9);
         Assert.assertTrue(processInstance10 == null);
     }
 
@@ -484,7 +497,7 @@ public class ProcessServiceTest {
         Mockito.when(processInstanceMapper.queryDetailById(222)).thenReturn(processInstance);
 
         // will throw exception when command id is 0 and delete fail
-        processService.handleCommand(logger, host, command1);
+        processService.handleCommand(host, command1);
     }
 
     @Test
@@ -850,8 +863,8 @@ public class ProcessServiceTest {
         int pageNumber = 0;
         int masterCount = 0;
         int thisMasterSlot = 2;
-        List<Command> commandList = processService.findCommandPageBySlot(pageSize,pageNumber,masterCount,thisMasterSlot);
-        Assert.assertEquals(0,commandList.size());
+        List<Command> commandList = processService.findCommandPageBySlot(pageSize, pageNumber, masterCount, thisMasterSlot);
+        Assert.assertEquals(0, commandList.size());
     }
 
     private TaskGroupQueue getTaskGroupQueue() {
