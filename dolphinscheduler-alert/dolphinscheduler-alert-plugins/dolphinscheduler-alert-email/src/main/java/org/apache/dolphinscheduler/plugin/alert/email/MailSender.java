@@ -22,6 +22,7 @@ import static java.util.Objects.requireNonNull;
 import org.apache.dolphinscheduler.alert.api.AlertConstants;
 import org.apache.dolphinscheduler.alert.api.AlertResult;
 import org.apache.dolphinscheduler.alert.api.ShowType;
+import org.apache.dolphinscheduler.common.constants.Constants;
 import org.apache.dolphinscheduler.plugin.alert.email.exception.AlertEmailException;
 import org.apache.dolphinscheduler.plugin.alert.email.template.AlertTemplate;
 import org.apache.dolphinscheduler.plugin.alert.email.template.DefaultHTMLTemplate;
@@ -103,12 +104,14 @@ public final class MailSender {
         requireNonNull(mailSenderEmail, MailParamsConstants.NAME_MAIL_SENDER + mustNotNull);
 
         enableSmtpAuth = config.get(MailParamsConstants.NAME_MAIL_SMTP_AUTH);
-
         mailUser = config.get(MailParamsConstants.NAME_MAIL_USER);
-        requireNonNull(mailUser, MailParamsConstants.NAME_MAIL_USER + mustNotNull);
-
         mailPasswd = config.get(MailParamsConstants.NAME_MAIL_PASSWD);
-        requireNonNull(mailPasswd, MailParamsConstants.NAME_MAIL_PASSWD + mustNotNull);
+
+        // Needs to check user && password only if enableSmtpAuth is true
+        if (Constants.STRING_TRUE.equals(enableSmtpAuth)) {
+            requireNonNull(mailUser, MailParamsConstants.NAME_MAIL_USER + mustNotNull);
+            requireNonNull(mailPasswd, MailParamsConstants.NAME_MAIL_PASSWD + mustNotNull);
+        }
 
         mailUseStartTLS = config.get(MailParamsConstants.NAME_MAIL_SMTP_STARTTLS_ENABLE);
         requireNonNull(mailUseStartTLS, MailParamsConstants.NAME_MAIL_SMTP_STARTTLS_ENABLE + mustNotNull);
@@ -402,7 +405,9 @@ public final class MailSender {
      */
     private void handleException(AlertResult alertResult, Exception e) {
         log.error("Send email to {} failed", receivers, e);
-        alertResult.setMessage("Send email to {" + String.join(",", receivers) + "} failed，" + e.toString());
+        alertResult.setMessage(
+                String.format("Send email to: %s, failed: %s",
+                        String.join(",", receivers), e.getMessage()));
     }
 
 }

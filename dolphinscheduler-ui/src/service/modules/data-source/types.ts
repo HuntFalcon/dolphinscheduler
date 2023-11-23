@@ -24,6 +24,7 @@ type IDataBase =
   | 'ORACLE'
   | 'SQLSERVER'
   | 'DB2'
+  | 'VERTICA'
   | 'PRESTO'
   | 'REDSHIFT'
   | 'ATHENA'
@@ -31,23 +32,39 @@ type IDataBase =
   | 'AZURESQL'
   | 'STARROCKS'
   | 'DAMENG'
+  | 'OCEANBASE'
+  | 'SSH'
+  | 'DATABEND'
+  | 'SNOWFLAKE'
+  | 'HANA'
+  | 'DORIS'
+  | 'KYUUBI'
+  | 'ZEPPELIN'
+  | 'SAGEMAKER'
+  | 'K8S'
 
 type IDataBaseLabel =
-| 'MYSQL'
-| 'POSTGRESQL'
-| 'HIVE'
-| 'SPARK'
-| 'CLICKHOUSE'
-| 'ORACLE'
-| 'SQLSERVER'
-| 'DB2'
-| 'PRESTO'
-| 'REDSHIFT'
-| 'ATHENA'
-| 'TRINO'
-| 'AZURESQL'
-| 'STARROCKS'
-| 'DAMENG'
+  | 'MYSQL'
+  | 'POSTGRESQL'
+  | 'HIVE'
+  | 'SPARK'
+  | 'CLICKHOUSE'
+  | 'ORACLE'
+  | 'SQLSERVER'
+  | 'DB2'
+  | 'PRESTO'
+  | 'REDSHIFT'
+  | 'ATHENA'
+  | 'TRINO'
+  | 'AZURESQL'
+  | 'STARROCKS'
+  | 'DAMENG'
+  | 'OCEANBASE'
+  | 'SSH'
+  | 'KYUUBI'
+  | 'ZEPPELIN'
+  | 'SAGEMAKER'
+  | 'K8S'
 
 interface IDataSource {
   id?: number
@@ -68,11 +85,15 @@ interface IDataSource {
   database?: string
   connectType?: string
   other?: object
-  testFlag?: number
-  bindTestId?: number
   endpoint?: string
+  restEndpoint?: string
+  kubeConfig?: string
+  namespace?: string
   MSIClientId?: string
   dbUser?: string
+  compatibleMode?: string
+  publicKey?: string
+  datawarehouse?: string
 }
 
 interface ListReq {

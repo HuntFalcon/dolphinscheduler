@@ -26,6 +26,8 @@ import org.apache.dolphinscheduler.api.service.LoggerService;
 import org.apache.dolphinscheduler.api.service.ProjectService;
 import org.apache.dolphinscheduler.api.utils.Result;
 import org.apache.dolphinscheduler.common.constants.Constants;
+import org.apache.dolphinscheduler.common.log.remote.RemoteLogUtils;
+import org.apache.dolphinscheduler.common.utils.LogUtils;
 import org.apache.dolphinscheduler.dao.entity.Project;
 import org.apache.dolphinscheduler.dao.entity.ResponseTaskLog;
 import org.apache.dolphinscheduler.dao.entity.TaskDefinition;
@@ -34,13 +36,26 @@ import org.apache.dolphinscheduler.dao.entity.User;
 import org.apache.dolphinscheduler.dao.mapper.ProjectMapper;
 import org.apache.dolphinscheduler.dao.mapper.TaskDefinitionMapper;
 import org.apache.dolphinscheduler.dao.repository.TaskInstanceDao;
-import org.apache.dolphinscheduler.remote.utils.Host;
-import org.apache.dolphinscheduler.service.log.LogClient;
+import org.apache.dolphinscheduler.extract.base.client.SingletonJdkDynamicRpcClientProxyFactory;
+import org.apache.dolphinscheduler.extract.master.IMasterLogService;
+import org.apache.dolphinscheduler.extract.master.transportor.LogicTaskInstanceLogFileDownloadRequest;
+import org.apache.dolphinscheduler.extract.master.transportor.LogicTaskInstanceLogFileDownloadResponse;
+import org.apache.dolphinscheduler.extract.master.transportor.LogicTaskInstanceLogPageQueryRequest;
+import org.apache.dolphinscheduler.extract.master.transportor.LogicTaskInstanceLogPageQueryResponse;
+import org.apache.dolphinscheduler.extract.worker.IWorkerLogService;
+import org.apache.dolphinscheduler.extract.worker.transportor.TaskInstanceLogFileDownloadRequest;
+import org.apache.dolphinscheduler.extract.worker.transportor.TaskInstanceLogFileDownloadResponse;
+import org.apache.dolphinscheduler.extract.worker.transportor.TaskInstanceLogPageQueryRequest;
+import org.apache.dolphinscheduler.extract.worker.transportor.TaskInstanceLogPageQueryResponse;
+import org.apache.dolphinscheduler.plugin.task.api.utils.TaskUtils;
 
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 
+import java.io.File;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
+import java.util.List;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -62,16 +77,13 @@ public class LoggerServiceImpl extends BaseServiceImpl implements LoggerService 
     private TaskInstanceDao taskInstanceDao;
 
     @Autowired
-    private LogClient logClient;
+    private ProjectMapper projectMapper;
 
     @Autowired
-    ProjectMapper projectMapper;
+    private ProjectService projectService;
 
     @Autowired
-    ProjectService projectService;
-
-    @Autowired
-    TaskDefinitionMapper taskDefinitionMapper;
+    private TaskDefinitionMapper taskDefinitionMapper;
 
     /**
      * view log
@@ -86,7 +98,7 @@ public class LoggerServiceImpl extends BaseServiceImpl implements LoggerService 
     @SuppressWarnings("unchecked")
     public Result<ResponseTaskLog> queryLog(User loginUser, int taskInstId, int skipLineNum, int limit) {
 
-        TaskInstance taskInstance = taskInstanceDao.findTaskInstanceById(taskInstId);
+        TaskInstance taskInstance = taskInstanceDao.queryById(taskInstId);
 
         if (taskInstance == null) {
             log.error("Task instance does not exist, taskInstanceId:{}.", taskInstId);
@@ -114,7 +126,7 @@ public class LoggerServiceImpl extends BaseServiceImpl implements LoggerService 
      */
     @Override
     public byte[] getLogBytes(User loginUser, int taskInstId) {
-        TaskInstance taskInstance = taskInstanceDao.findTaskInstanceById(taskInstId);
+        TaskInstance taskInstance = taskInstanceDao.queryById(taskInstId);
         if (taskInstance == null || StringUtils.isBlank(taskInstance.getHost())) {
             throw new ServiceException("task instance is null or host is null");
         }
@@ -135,28 +147,20 @@ public class LoggerServiceImpl extends BaseServiceImpl implements LoggerService 
      */
     @Override
     @SuppressWarnings("unchecked")
-    public Map<String, Object> queryLog(User loginUser, long projectCode, int taskInstId, int skipLineNum, int limit) {
-        Project project = projectMapper.queryByCode(projectCode);
+    public String queryLog(User loginUser, long projectCode, int taskInstId, int skipLineNum, int limit) {
         // check user access for project
-        Map<String, Object> result = projectService.checkProjectAndAuth(loginUser, project, projectCode, VIEW_LOG);
-        if (result.get(Constants.STATUS) != Status.SUCCESS) {
-            return result;
-        }
+        projectService.checkProjectAndAuthThrowException(loginUser, projectCode, VIEW_LOG);
         // check whether the task instance can be found
-        TaskInstance task = taskInstanceDao.findTaskInstanceById(taskInstId);
+        TaskInstance task = taskInstanceDao.queryById(taskInstId);
         if (task == null || StringUtils.isBlank(task.getHost())) {
-            putMsg(result, Status.TASK_INSTANCE_NOT_FOUND);
-            return result;
+            throw new ServiceException(Status.TASK_INSTANCE_NOT_FOUND);
         }
 
         TaskDefinition taskDefinition = taskDefinitionMapper.queryByCode(task.getTaskCode());
         if (taskDefinition != null && projectCode != taskDefinition.getProjectCode()) {
-            putMsg(result, Status.TASK_INSTANCE_NOT_FOUND, taskInstId);
-            return result;
+            throw new ServiceException(Status.TASK_INSTANCE_NOT_FOUND, taskInstId);
         }
-        String log = queryLog(task, skipLineNum, limit);
-        result.put(Constants.DATA_LIST, log);
-        return result;
+        return queryLog(task, skipLineNum, limit);
     }
 
     /**
@@ -169,14 +173,11 @@ public class LoggerServiceImpl extends BaseServiceImpl implements LoggerService 
      */
     @Override
     public byte[] getLogBytes(User loginUser, long projectCode, int taskInstId) {
-        Project project = projectMapper.queryByCode(projectCode);
         // check user access for project
-        Map<String, Object> result = projectService.checkProjectAndAuth(loginUser, project, projectCode, DOWNLOAD_LOG);
-        if (result.get(Constants.STATUS) != Status.SUCCESS) {
-            throw new ServiceException("user has no permission");
-        }
+        projectService.checkProjectAndAuthThrowException(loginUser, projectCode, DOWNLOAD_LOG);
+
         // check whether the task instance can be found
-        TaskInstance task = taskInstanceDao.findTaskInstanceById(taskInstId);
+        TaskInstance task = taskInstanceDao.queryById(taskInstId);
         if (task == null || StringUtils.isBlank(task.getHost())) {
             throw new ServiceException("task instance is null or host is null");
         }
@@ -197,24 +198,61 @@ public class LoggerServiceImpl extends BaseServiceImpl implements LoggerService 
      * @return log string data
      */
     private String queryLog(TaskInstance taskInstance, int skipLineNum, int limit) {
-        Host host = Host.of(taskInstance.getHost());
-
-        log.info("Query task instance log, taskInstanceId:{}, taskInstanceName:{}, host:{}, logPath:{}, port:{}",
-                taskInstance.getId(), taskInstance.getName(), host.getIp(), taskInstance.getLogPath(), host.getPort());
-
-        StringBuilder log = new StringBuilder();
+        final String logPath = taskInstance.getLogPath();
+        final String host = taskInstance.getHost();
+        log.info("Query task instance log, taskInstanceId:{}, taskInstanceName:{}, host: {}, logPath:{}",
+                taskInstance.getId(), taskInstance.getName(), taskInstance.getHost(), logPath);
+        StringBuilder sb = new StringBuilder();
         if (skipLineNum == 0) {
             String head = String.format(LOG_HEAD_FORMAT,
-                    taskInstance.getLogPath(),
-                    host,
+                    logPath,
+                    taskInstance.getHost(),
                     Constants.SYSTEM_LINE_SEPARATOR);
-            log.append(head);
+            sb.append(head);
         }
 
-        log.append(logClient
-                .rollViewLog(host.getIp(), host.getPort(), taskInstance.getLogPath(), skipLineNum, limit));
-
-        return log.toString();
+        String logContent = null;
+        if (TaskUtils.isLogicTask(taskInstance.getTaskType())) {
+            IMasterLogService masterLogService = SingletonJdkDynamicRpcClientProxyFactory
+                    .getProxyClient(taskInstance.getHost(), IMasterLogService.class);
+            try {
+                LogicTaskInstanceLogPageQueryRequest logicTaskInstanceLogPageQueryRequest =
+                        new LogicTaskInstanceLogPageQueryRequest(taskInstance.getId(), logPath, skipLineNum, limit);
+                LogicTaskInstanceLogPageQueryResponse logicTaskInstanceLogPageQueryResponse =
+                        masterLogService.pageQueryLogicTaskInstanceLog(logicTaskInstanceLogPageQueryRequest);
+                logContent = logicTaskInstanceLogPageQueryResponse.getLogContent();
+            } catch (Exception ex) {
+                log.error("Query LogicTaskInstance log error", ex);
+            }
+        } else {
+            IWorkerLogService iWorkerLogService = SingletonJdkDynamicRpcClientProxyFactory
+                    .getProxyClient(host, IWorkerLogService.class);
+            try {
+                TaskInstanceLogPageQueryRequest taskInstanceLogPageQueryRequest =
+                        new TaskInstanceLogPageQueryRequest(taskInstance.getId(), logPath, skipLineNum, limit);
+                TaskInstanceLogPageQueryResponse taskInstanceLogPageQueryResponse =
+                        iWorkerLogService.pageQueryTaskInstanceLog(taskInstanceLogPageQueryRequest);
+                logContent = taskInstanceLogPageQueryResponse.getLogContent();
+            } catch (Exception ex) {
+                log.error("Query LogicTaskInstance log error", ex);
+            }
+        }
+        if (logContent == null && RemoteLogUtils.isRemoteLoggingEnable()) {
+            // When getting the log for the first time (skipLineNum=0) returns empty, get the log from remote target
+            try {
+                log.info("Get log {} from remote target", logPath);
+                RemoteLogUtils.getRemoteLog(logPath);
+                List<String> lines = LogUtils.readPartFileContentFromLocal(logPath, skipLineNum, limit);
+                logContent = LogUtils.rollViewLogLines(lines);
+                FileUtils.delete(new File(logPath));
+            } catch (IOException e) {
+                log.error("Error while getting log from remote target", e);
+            }
+        }
+        if (logContent != null) {
+            sb.append(logContent);
+        }
+        return sb.toString();
     }
 
     /**
@@ -224,12 +262,54 @@ public class LoggerServiceImpl extends BaseServiceImpl implements LoggerService 
      * @return log byte array
      */
     private byte[] getLogBytes(TaskInstance taskInstance) {
-        Host host = Host.of(taskInstance.getHost());
+        String host = taskInstance.getHost();
+        String logPath = taskInstance.getLogPath();
+
         byte[] head = String.format(LOG_HEAD_FORMAT,
-                taskInstance.getLogPath(),
+                logPath,
                 host,
                 Constants.SYSTEM_LINE_SEPARATOR).getBytes(StandardCharsets.UTF_8);
-        return Bytes.concat(head,
-                logClient.getLogBytes(host.getIp(), host.getPort(), taskInstance.getLogPath()));
+
+        byte[] logBytes = new byte[0];
+        if (TaskUtils.isLogicTask(taskInstance.getTaskType())) {
+            IMasterLogService masterLogService = SingletonJdkDynamicRpcClientProxyFactory
+                    .getProxyClient(taskInstance.getHost(), IMasterLogService.class);
+            try {
+                LogicTaskInstanceLogFileDownloadRequest logicTaskInstanceLogFileDownloadRequest =
+                        new LogicTaskInstanceLogFileDownloadRequest(taskInstance.getId(), logPath);
+                LogicTaskInstanceLogFileDownloadResponse logicTaskInstanceLogFileDownloadResponse =
+                        masterLogService.getLogicTaskInstanceWholeLogFileBytes(logicTaskInstanceLogFileDownloadRequest);
+                logBytes = logicTaskInstanceLogFileDownloadResponse.getLogBytes();
+            } catch (Exception ex) {
+                log.error("Query LogicTaskInstance log error", ex);
+            }
+        } else {
+            IWorkerLogService iWorkerLogService = SingletonJdkDynamicRpcClientProxyFactory
+                    .getProxyClient(host, IWorkerLogService.class);
+            try {
+                TaskInstanceLogFileDownloadRequest taskInstanceLogFileDownloadRequest =
+                        new TaskInstanceLogFileDownloadRequest(taskInstance.getId(), logPath);
+                TaskInstanceLogFileDownloadResponse taskInstanceWholeLogFileBytes =
+                        iWorkerLogService.getTaskInstanceWholeLogFileBytes(taskInstanceLogFileDownloadRequest);
+                logBytes = taskInstanceWholeLogFileBytes.getLogBytes();
+            } catch (Exception ex) {
+                log.error("Query LogicTaskInstance log error", ex);
+            }
+        }
+
+        if ((logBytes == null || logBytes.length == 0) && RemoteLogUtils.isRemoteLoggingEnable()) {
+            // get task log from remote target
+            try {
+                log.info("Get log {} from remote target", logPath);
+                RemoteLogUtils.getRemoteLog(logPath);
+                File logFile = new File(logPath);
+                logBytes = FileUtils.readFileToByteArray(logFile);
+                FileUtils.delete(logFile);
+            } catch (IOException e) {
+                log.error("Error while getting log from remote target", e);
+            }
+        }
+
+        return Bytes.concat(head, logBytes);
     }
 }

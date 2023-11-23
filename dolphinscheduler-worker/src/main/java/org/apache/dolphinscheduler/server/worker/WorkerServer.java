@@ -26,11 +26,10 @@ import org.apache.dolphinscheduler.plugin.task.api.TaskExecutionContextCacheMana
 import org.apache.dolphinscheduler.plugin.task.api.TaskPluginManager;
 import org.apache.dolphinscheduler.plugin.task.api.utils.LogUtils;
 import org.apache.dolphinscheduler.plugin.task.api.utils.ProcessUtils;
-import org.apache.dolphinscheduler.server.worker.config.WorkerConfig;
 import org.apache.dolphinscheduler.server.worker.message.MessageRetryRunner;
 import org.apache.dolphinscheduler.server.worker.registry.WorkerRegistryClient;
-import org.apache.dolphinscheduler.server.worker.rpc.WorkerRpcClient;
 import org.apache.dolphinscheduler.server.worker.rpc.WorkerRpcServer;
+import org.apache.dolphinscheduler.server.worker.runner.GlobalTaskInstanceDispatchQueueLooper;
 import org.apache.dolphinscheduler.server.worker.runner.WorkerManagerThread;
 
 import org.apache.commons.collections4.CollectionUtils;
@@ -45,26 +44,17 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.ComponentScan;
-import org.springframework.context.annotation.FilterType;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 @SpringBootApplication
 @EnableTransactionManagement
-@ComponentScan(basePackages = "org.apache.dolphinscheduler", excludeFilters = {
-        @ComponentScan.Filter(type = FilterType.REGEX, pattern = {
-                "org.apache.dolphinscheduler.service.process.*",
-                "org.apache.dolphinscheduler.service.queue.*",
-        })
-})
+@ComponentScan(basePackages = "org.apache.dolphinscheduler")
 @Slf4j
 public class WorkerServer implements IStoppable {
 
     @Autowired
     private WorkerManagerThread workerManagerThread;
 
-    /**
-     * worker registry
-     */
     @Autowired
     private WorkerRegistryClient workerRegistryClient;
 
@@ -75,13 +65,10 @@ public class WorkerServer implements IStoppable {
     private WorkerRpcServer workerRpcServer;
 
     @Autowired
-    private WorkerRpcClient workerRpcClient;
-
-    @Autowired
     private MessageRetryRunner messageRetryRunner;
 
     @Autowired
-    private WorkerConfig workerConfig;
+    private GlobalTaskInstanceDispatchQueueLooper globalTaskInstanceDispatchQueueLooper;
 
     /**
      * worker server startup, not use web service
@@ -96,7 +83,6 @@ public class WorkerServer implements IStoppable {
     @PostConstruct
     public void run() {
         this.workerRpcServer.start();
-        this.workerRpcClient.start();
         this.taskPluginManager.loadPlugin();
 
         this.workerRegistryClient.setRegistryStoppable(this);
@@ -105,6 +91,7 @@ public class WorkerServer implements IStoppable {
         this.workerManagerThread.start();
 
         this.messageRetryRunner.start();
+        this.globalTaskInstanceDispatchQueueLooper.start();
 
         /*
          * registry hooks, which are called before the process exits
@@ -141,9 +128,6 @@ public class WorkerServer implements IStoppable {
         close(cause);
     }
 
-    /**
-     * kill all tasks which are running
-     */
     public void killAllRunningTasks() {
         Collection<TaskExecutionContext> taskRequests = TaskExecutionContextCacheManager.getAllTaskRequestList();
         if (CollectionUtils.isEmpty(taskRequests)) {

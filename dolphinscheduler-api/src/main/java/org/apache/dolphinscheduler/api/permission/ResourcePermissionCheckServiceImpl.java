@@ -112,7 +112,7 @@ public class ResourcePermissionCheckServiceImpl
                                            Logger logger) {
         if (Objects.nonNull(needChecks) && needChecks.length > 0) {
             Set<?> originResSet = new HashSet<>(Arrays.asList(needChecks));
-            Set<?> ownResSets = RESOURCE_LIST_MAP.get(authorizationType).listAuthorizedResource(userId, logger);
+            Set<?> ownResSets = RESOURCE_LIST_MAP.get(authorizationType).listAuthorizedResourceIds(userId, logger);
             boolean checkResult = ownResSets != null && ownResSets.containsAll(originResSet);
             if (!checkResult) {
                 logger.warn("User does not have resource permission on associated resources, userId:{}", userId);
@@ -142,18 +142,13 @@ public class ResourcePermissionCheckServiceImpl
     }
 
     @Override
-    public void postHandle(Object authorizationType, Integer userId, List<Integer> ids, Logger logger) {
-        logger.debug("no post handle");
-    }
-
-    @Override
     public Set<Object> userOwnedResourceIdsAcquisition(Object authorizationType, Integer userId, Logger logger) {
         User user = processService.getUserById(userId);
         if (user == null) {
             logger.error("User does not exist, userId:{}.", userId);
             return Collections.emptySet();
         }
-        return (Set<Object>) RESOURCE_LIST_MAP.get(authorizationType).listAuthorizedResource(
+        return (Set<Object>) RESOURCE_LIST_MAP.get(authorizationType).listAuthorizedResourceIds(
                 user.getUserType().equals(UserType.ADMIN_USER) ? 0 : userId, logger);
     }
 
@@ -173,12 +168,11 @@ public class ResourcePermissionCheckServiceImpl
 
         @Override
         public boolean permissionCheck(int userId, String permissionKey, Logger logger) {
-            // admin can create projects
             return false;
         }
 
         @Override
-        public Set<Integer> listAuthorizedResource(int userId, Logger logger) {
+        public Set<Integer> listAuthorizedResourceIds(int userId, Logger logger) {
             if (userId != 0) {
                 return Collections.emptySet();
             }
@@ -208,7 +202,7 @@ public class ResourcePermissionCheckServiceImpl
         }
 
         @Override
-        public Set<Integer> listAuthorizedResource(int userId, Logger logger) {
+        public Set<Integer> listAuthorizedResourceIds(int userId, Logger logger) {
             return projectMapper.listAuthorizedProjects(userId, null).stream().map(Project::getId).collect(toSet());
         }
     }
@@ -231,7 +225,7 @@ public class ResourcePermissionCheckServiceImpl
         }
 
         @Override
-        public Set<Integer> listAuthorizedResource(int userId, Logger logger) {
+        public Set<Integer> listAuthorizedResourceIds(int userId, Logger logger) {
             List<Resource> relationResources;
             if (userId == 0) {
                 relationResources = new ArrayList<>();
@@ -267,7 +261,7 @@ public class ResourcePermissionCheckServiceImpl
         }
 
         @Override
-        public Set<Integer> listAuthorizedResource(int userId, Logger logger) {
+        public Set<Integer> listAuthorizedResourceIds(int userId, Logger logger) {
             List<UdfFunc> udfFuncList = udfFuncMapper.listAuthorizedUdfByUserId(userId);
             return udfFuncList.stream().map(UdfFunc::getId).collect(toSet());
         }
@@ -293,7 +287,7 @@ public class ResourcePermissionCheckServiceImpl
         }
 
         @Override
-        public Set<Integer> listAuthorizedResource(int userId, Logger logger) {
+        public Set<Integer> listAuthorizedResourceIds(int userId, Logger logger) {
             List<TaskGroup> taskGroupList = taskGroupMapper.listAuthorizedResource(userId);
             return taskGroupList.stream().map(TaskGroup::getId).collect(Collectors.toSet());
         }
@@ -305,11 +299,11 @@ public class ResourcePermissionCheckServiceImpl
     }
 
     @Component
-    public static class K8sNamespaceResourceList implements ResourceAcquisitionAndPermissionCheck<Integer> {
+    public static class K8sNamespaceResourcePermissionCheck implements ResourceAcquisitionAndPermissionCheck<Integer> {
 
         private final K8sNamespaceMapper k8sNamespaceMapper;
 
-        public K8sNamespaceResourceList(K8sNamespaceMapper k8sNamespaceMapper) {
+        public K8sNamespaceResourcePermissionCheck(K8sNamespaceMapper k8sNamespaceMapper) {
             this.k8sNamespaceMapper = k8sNamespaceMapper;
         }
 
@@ -324,18 +318,18 @@ public class ResourcePermissionCheckServiceImpl
         }
 
         @Override
-        public Set<Integer> listAuthorizedResource(int userId, Logger logger) {
+        public Set<Integer> listAuthorizedResourceIds(int userId, Logger logger) {
             List<K8sNamespace> k8sNamespaces = k8sNamespaceMapper.queryAuthedNamespaceListByUserId(userId);
             return k8sNamespaces.stream().map(K8sNamespace::getId).collect(Collectors.toSet());
         }
     }
 
     @Component
-    public static class EnvironmentResourceList implements ResourceAcquisitionAndPermissionCheck<Integer> {
+    public static class EnvironmentResourcePermissionCheck implements ResourceAcquisitionAndPermissionCheck<Integer> {
 
         private final EnvironmentMapper environmentMapper;
 
-        public EnvironmentResourceList(EnvironmentMapper environmentMapper) {
+        public EnvironmentResourcePermissionCheck(EnvironmentMapper environmentMapper) {
             this.environmentMapper = environmentMapper;
         }
 
@@ -350,18 +344,18 @@ public class ResourcePermissionCheckServiceImpl
         }
 
         @Override
-        public Set<Integer> listAuthorizedResource(int userId, Logger logger) {
+        public Set<Integer> listAuthorizedResourceIds(int userId, Logger logger) {
             List<Environment> environments = environmentMapper.queryAllEnvironmentList();
             return environments.stream().map(Environment::getId).collect(Collectors.toSet());
         }
     }
 
     @Component
-    public static class WorkerGroupResourceList implements ResourceAcquisitionAndPermissionCheck<Integer> {
+    public static class WorkerGroupResourcePermissionCheck implements ResourceAcquisitionAndPermissionCheck<Integer> {
 
         private final WorkerGroupMapper workerGroupMapper;
 
-        public WorkerGroupResourceList(WorkerGroupMapper workerGroupMapper) {
+        public WorkerGroupResourcePermissionCheck(WorkerGroupMapper workerGroupMapper) {
             this.workerGroupMapper = workerGroupMapper;
         }
 
@@ -376,7 +370,7 @@ public class ResourcePermissionCheckServiceImpl
         }
 
         @Override
-        public Set<Integer> listAuthorizedResource(int userId, Logger logger) {
+        public Set<Integer> listAuthorizedResourceIds(int userId, Logger logger) {
             List<WorkerGroup> workerGroups = workerGroupMapper.queryAllWorkerGroup();
             return workerGroups.stream().map(WorkerGroup::getId).collect(Collectors.toSet());
         }
@@ -386,11 +380,13 @@ public class ResourcePermissionCheckServiceImpl
      * AlertPluginInstance Resource
      */
     @Component
-    public static class AlertPluginInstanceResourceList implements ResourceAcquisitionAndPermissionCheck<Integer> {
+    public static class AlertPluginInstanceResourcePermissionCheck
+            implements
+                ResourceAcquisitionAndPermissionCheck<Integer> {
 
         private final AlertPluginInstanceMapper alertPluginInstanceMapper;
 
-        public AlertPluginInstanceResourceList(AlertPluginInstanceMapper alertPluginInstanceMapper) {
+        public AlertPluginInstanceResourcePermissionCheck(AlertPluginInstanceMapper alertPluginInstanceMapper) {
             this.alertPluginInstanceMapper = alertPluginInstanceMapper;
         }
 
@@ -405,7 +401,7 @@ public class ResourcePermissionCheckServiceImpl
         }
 
         @Override
-        public Set<Integer> listAuthorizedResource(int userId, Logger logger) {
+        public Set<Integer> listAuthorizedResourceIds(int userId, Logger logger) {
             return Collections.emptySet();
         }
     }
@@ -414,11 +410,11 @@ public class ResourcePermissionCheckServiceImpl
      * AlertPluginInstance Resource
      */
     @Component
-    public static class AlertGroupResourceList implements ResourceAcquisitionAndPermissionCheck<Integer> {
+    public static class AlertGroupResourcePermissionCheck implements ResourceAcquisitionAndPermissionCheck<Integer> {
 
         private final AlertGroupMapper alertGroupMapper;
 
-        public AlertGroupResourceList(AlertGroupMapper alertGroupMapper) {
+        public AlertGroupResourcePermissionCheck(AlertGroupMapper alertGroupMapper) {
             this.alertGroupMapper = alertGroupMapper;
         }
 
@@ -433,7 +429,7 @@ public class ResourcePermissionCheckServiceImpl
         }
 
         @Override
-        public Set<Integer> listAuthorizedResource(int userId, Logger logger) {
+        public Set<Integer> listAuthorizedResourceIds(int userId, Logger logger) {
             List<AlertGroup> alertGroupList = alertGroupMapper.queryAllGroupList();
             return alertGroupList.stream().map(AlertGroup::getId).collect(toSet());
         }
@@ -443,11 +439,11 @@ public class ResourcePermissionCheckServiceImpl
      * Tenant Resource
      */
     @Component
-    public static class TenantResourceList implements ResourceAcquisitionAndPermissionCheck<Integer> {
+    public static class TenantResourcePermissionCheck implements ResourceAcquisitionAndPermissionCheck<Integer> {
 
         private final TenantMapper tenantMapper;
 
-        public TenantResourceList(TenantMapper tenantMapper) {
+        public TenantResourcePermissionCheck(TenantMapper tenantMapper) {
             this.tenantMapper = tenantMapper;
         }
 
@@ -462,7 +458,7 @@ public class ResourcePermissionCheckServiceImpl
         }
 
         @Override
-        public Set<Integer> listAuthorizedResource(int userId, Logger logger) {
+        public Set<Integer> listAuthorizedResourceIds(int userId, Logger logger) {
             List<Tenant> tenantList = tenantMapper.queryAll();
             return tenantList.stream().map(Tenant::getId).collect(Collectors.toSet());
         }
@@ -472,11 +468,11 @@ public class ResourcePermissionCheckServiceImpl
      * DataSource Resource
      */
     @Component
-    public static class DataSourceResourceList implements ResourceAcquisitionAndPermissionCheck<Integer> {
+    public static class DataSourceResourcePermissionCheck implements ResourceAcquisitionAndPermissionCheck<Integer> {
 
         private final DataSourceMapper dataSourceMapper;
 
-        public DataSourceResourceList(DataSourceMapper dataSourceMapper) {
+        public DataSourceResourcePermissionCheck(DataSourceMapper dataSourceMapper) {
             this.dataSourceMapper = dataSourceMapper;
         }
 
@@ -491,7 +487,7 @@ public class ResourcePermissionCheckServiceImpl
         }
 
         @Override
-        public Set<Integer> listAuthorizedResource(int userId, Logger logger) {
+        public Set<Integer> listAuthorizedResourceIds(int userId, Logger logger) {
             return dataSourceMapper.listAuthorizedDataSource(userId, null).stream().map(DataSource::getId)
                     .collect(toSet());
         }
@@ -501,11 +497,11 @@ public class ResourcePermissionCheckServiceImpl
      * AccessToken Resource
      */
     @Component
-    public static class AccessTokenList implements ResourceAcquisitionAndPermissionCheck<Integer> {
+    public static class AccessTokenResourcePermissionCheck implements ResourceAcquisitionAndPermissionCheck<Integer> {
 
         private final AccessTokenMapper accessTokenMapper;
 
-        public AccessTokenList(AccessTokenMapper accessTokenMapper) {
+        public AccessTokenResourcePermissionCheck(AccessTokenMapper accessTokenMapper) {
             this.accessTokenMapper = accessTokenMapper;
         }
 
@@ -520,7 +516,7 @@ public class ResourcePermissionCheckServiceImpl
         }
 
         @Override
-        public Set<Integer> listAuthorizedResource(int userId, Logger logger) {
+        public Set<Integer> listAuthorizedResourceIds(int userId, Logger logger) {
             return accessTokenMapper.listAuthorizedAccessToken(userId, null).stream().map(AccessToken::getId)
                     .collect(toSet());
         }
@@ -540,7 +536,7 @@ public class ResourcePermissionCheckServiceImpl
          * @param userId
          * @return
          */
-        Set<T> listAuthorizedResource(int userId, Logger logger);
+        Set<T> listAuthorizedResourceIds(int userId, Logger logger);
 
         /**
          * permission check
